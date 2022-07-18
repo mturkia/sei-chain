@@ -441,7 +441,8 @@ func New(
 		keys[epochmoduletypes.StoreKey],
 		keys[epochmoduletypes.MemStoreKey],
 		app.GetSubspace(epochmoduletypes.ModuleName),
-	)
+	).SetHooks(epochmoduletypes.NewMultiEpochHooks(
+		app.MintKeeper.Hooks()))
 	app.DexKeeper = *dexmodulekeeper.NewKeeper(
 		appCodec,
 		keys[dexmoduletypes.StoreKey],
