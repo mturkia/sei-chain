@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/CosmWasm/wasmd/x/wasm"
 	"github.com/gorilla/mux"
@@ -266,38 +267,51 @@ func (am AppModule) EndBlock(ctx sdk.Context, _ abci.RequestEndBlock) []abci.Val
 		cachedCtx, msCached := store.GetCachedContext(ctx)
 		// cache keeper in-memory state
 		memStateCopy := am.keeper.MemState.DeepCopy()
-		finalizeBlockMessages := map[string]*dextypeswasm.SudoFinalizeBlockMsg{}
+		finalizeBlockMessages := sync.Map{} // of type map[string]*dextypeswasm.SudoFinalizeBlockMsg{}
 		for contractAddr := range validContractAddresses {
-			finalizeBlockMessages[contractAddr] = dextypeswasm.NewSudoFinalizeBlockMsg()
+			finalizeBlockMessages.Store(contractAddr, dextypeswasm.NewSudoFinalizeBlockMsg())
 		}
 
-		for contractAddr, contractInfo := range validContractAddresses {
+		validContractInfo := []types.ContractInfo{}
+		for _, contractInfo := range validContractAddresses {
+			validContractInfo = append(validContractInfo, contractInfo)
+		}
+		mu := sync.Mutex{}
+		runnable := func(contractInfo types.ContractInfo) {
 			if !contractInfo.NeedOrderMatching {
-				continue
+				return
 			}
-			ctx.Logger().Info(fmt.Sprintf("End block for %s", contractAddr))
+			cachedCtx.Logger().Info(fmt.Sprintf("End block for %s", contractInfo.ContractAddr))
 			if orderResultsMap, err := am.endBlockForContract(cachedCtx, contractInfo); err != nil {
-				ctx.Logger().Error(fmt.Sprintf("Error for EndBlock of %s", contractAddr))
-				failedContractAddresses.Add(contractAddr)
+				cachedCtx.Logger().Error(fmt.Sprintf("Error for EndBlock of %s", contractInfo.ContractAddr))
+				failedContractAddresses.Add(contractInfo.ContractAddr)
 			} else {
 				for account, orderResults := range orderResultsMap {
 					// only add to finalize message for contract addresses
-					if msg, ok := finalizeBlockMessages[account]; ok {
-						msg.AddContractResult(orderResults)
+					if msg, ok := finalizeBlockMessages.Load(account); ok {
+						typedMsg := msg.(*dextypeswasm.SudoFinalizeBlockMsg)
+						mu.Lock()
+						typedMsg.AddContractResult(orderResults)
+						mu.Unlock()
 					}
 				}
 			}
 		}
+		runner := contract.NewParallelRunner(runnable, validContractInfo)
+		runner.Run()
 
-		for contractAddr, finalizeBlockMsg := range finalizeBlockMessages {
+		finalizeBlockMessages.Range(func(key, val any) bool {
+			contractAddr := key.(string)
+			finalizeBlockMsg := val.(*dextypeswasm.SudoFinalizeBlockMsg)
 			if !validContractAddresses[contractAddr].NeedHook {
-				continue
+				return true
 			}
 			if _, err := dexkeeperutils.CallContractSudo(cachedCtx, &am.keeper, contractAddr, finalizeBlockMsg); err != nil {
-				ctx.Logger().Error(fmt.Sprintf("Error calling FinalizeBlock of %s", contractAddr))
+				cachedCtx.Logger().Error(fmt.Sprintf("Error calling FinalizeBlock of %s", contractAddr))
 				failedContractAddresses.Add(contractAddr)
 			}
-		}
+			return true
+		})
 
 		// No error is thrown for any contract. This should happen most of the time.
 		if failedContractAddresses.Size() == 0 {
@@ -346,9 +360,16 @@ func (am AppModule) endBlockForContract(ctx sdk.Context, contract types.Contract
 	}
 
 	// populate order placement results for FinalizeBlock hook
-	for _, orders := range am.keeper.MemState.BlockOrders[typedContractAddr] {
-		dextypeswasm.PopulateOrderPlacementResults(contractAddr, *orders, orderResults)
+	contractOrders, exists := am.keeper.MemState.BlockOrders.Load(typedContractAddr)
+	if !exists {
+		// this should never happen
+		panic(fmt.Sprintf("No order list initialized for contract %s", typedContractAddr))
 	}
+	contractOrders.(*sync.Map).Range(func(_, val any) bool {
+		orders := val.(*dexcache.BlockOrders)
+		dextypeswasm.PopulateOrderPlacementResults(contractAddr, *orders, orderResults)
+		return true
+	})
 
 	for _, pair := range registeredPairs {
 		typedPairStr := dextypesutils.GetPairString(&pair) //nolint:gosec // USING THE POINTER HERE COULD BE BAD, LET'S CHECK IT
@@ -488,8 +509,7 @@ func (am AppModule) endBlockForContract(ctx sdk.Context, contract types.Contract
 			am.keeper.UpdateOrderStatus(ctx, contractAddr, zeroAccountOrder.OrderID, types.OrderStatus_FULFILLED)
 		}
 
-		emptyBlockCancel := dexcache.BlockCancellations([]types.Cancellation{})
-		am.keeper.MemState.BlockCancels[typedContractAddr][typedPairStr] = &emptyBlockCancel
+		am.keeper.MemState.ClearCancellationForPair(typedContractAddr, typedPairStr)
 		for _, marketOrder := range marketBuys {
 			if marketOrder.Quantity.IsPositive() {
 				am.keeper.MemState.GetBlockCancels(typedContractAddr, typedPairStr).AddCancel(types.Cancellation{

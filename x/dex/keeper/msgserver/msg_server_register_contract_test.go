@@ -27,13 +27,13 @@ func TestRegisterContract(t *testing.T) {
 	require.Nil(t, storedContracts[0].DependentContractAddrs)
 
 	contractInfo.DependentContractAddrs = []string{"TEST2"}
-	server.RegisterContract(wctx, &types.MsgRegisterContract{
+	_, err := server.RegisterContract(wctx, &types.MsgRegisterContract{
 		Creator:  keepertest.TestAccount,
 		Contract: &contractInfo,
 	})
+	require.NotNil(t, err)
 	storedContracts = keeper.GetAllContractInfo(ctx)
 	require.Equal(t, 1, len(storedContracts))
-	require.Equal(t, 1, len(storedContracts[0].DependentContractAddrs))
 }
 
 func TestRegisterContractCircularDependency(t *testing.T) {
@@ -41,9 +41,8 @@ func TestRegisterContractCircularDependency(t *testing.T) {
 	wctx := sdk.WrapSDKContext(ctx)
 	server := msgserver.NewMsgServerImpl(*keeper, nil)
 	contractInfo1 := types.ContractInfo{
-		CodeId:                 1,
-		ContractAddr:           "test1",
-		DependentContractAddrs: []string{"test2"},
+		CodeId:       1,
+		ContractAddr: "test1",
 	}
 	server.RegisterContract(wctx, &types.MsgRegisterContract{
 		Creator:  keepertest.TestAccount,
@@ -51,7 +50,6 @@ func TestRegisterContractCircularDependency(t *testing.T) {
 	})
 	storedContracts := keeper.GetAllContractInfo(ctx)
 	require.Equal(t, 1, len(storedContracts))
-	require.Equal(t, uint64(1), storedContracts[0].CodeId)
 
 	// This contract should fail to be registered because it causes a
 	// circular dependency
@@ -60,9 +58,17 @@ func TestRegisterContractCircularDependency(t *testing.T) {
 		ContractAddr:           "test2",
 		DependentContractAddrs: []string{"test1"},
 	}
-	_, err := server.RegisterContract(wctx, &types.MsgRegisterContract{
+	server.RegisterContract(wctx, &types.MsgRegisterContract{
 		Creator:  keepertest.TestAccount,
 		Contract: &contractInfo2,
+	})
+	storedContracts = keeper.GetAllContractInfo(ctx)
+	require.Equal(t, 2, len(storedContracts))
+
+	contractInfo1.DependentContractAddrs = []string{"test2"}
+	_, err := server.RegisterContract(wctx, &types.MsgRegisterContract{
+		Creator:  keepertest.TestAccount,
+		Contract: &contractInfo1,
 	})
 	require.NotNil(t, err)
 }
