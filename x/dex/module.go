@@ -265,9 +265,9 @@ func (am AppModule) EndBlock(ctx sdk.Context, _ abci.RequestEndBlock) []abci.Val
 			finalizeBlockMessages.Store(contractAddr, dextypeswasm.NewSudoFinalizeBlockMsg())
 		}
 
-		validContractInfo := []types.ContractInfo{}
+		validContractsInfo := []types.ContractInfo{}
 		for _, contractInfo := range validContractAddresses {
-			validContractInfo = append(validContractInfo, contractInfo)
+			validContractsInfo = append(validContractsInfo, contractInfo)
 		}
 		mu := sync.Mutex{}
 		runnable := func(contractInfo types.ContractInfo) {
@@ -290,7 +290,7 @@ func (am AppModule) EndBlock(ctx sdk.Context, _ abci.RequestEndBlock) []abci.Val
 				}
 			}
 		}
-		runner := contract.NewParallelRunner(runnable, validContractInfo)
+		runner := contract.NewParallelRunner(runnable, validContractsInfo)
 		runner.Run()
 
 		finalizeBlockMessages.Range(func(key, val any) bool {
