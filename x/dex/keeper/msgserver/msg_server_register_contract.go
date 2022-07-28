@@ -61,7 +61,7 @@ func (k msgServer) removeExistingDependencies(ctx sdk.Context, msg *types.MsgReg
 			continue
 		}
 		dependencyInfo.NumIncomingPaths--
-		if err := k.SetContract(ctx, &contractInfo); err != nil {
+		if err := k.SetContract(ctx, &dependencyInfo); err != nil {
 			return err
 		}
 	}

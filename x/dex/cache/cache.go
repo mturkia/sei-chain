@@ -98,50 +98,33 @@ func (s *MemState) ClearCancellationForPair(contractAddr typesutils.ContractAddr
 
 func (s *MemState) DeepCopy() *MemState {
 	copy := NewMemState()
-	s.BlockOrders.Range(func(key, val any) bool {
-		contractAddr := key.(typesutils.ContractAddress)
-		_map := val.(*sync.Map)
-		_map.Range(func(pkey, pval any) bool {
-			pair := pkey.(typesutils.PairString)
-			blockOrders := pval.(*BlockOrders)
-			for _, blockOrder := range *blockOrders {
-				copy.GetBlockOrders(contractAddr, pair).AddOrder(blockOrder)
-			}
-			return true
-		})
-		return true
+
+	deepCopyNestedMap(s.BlockOrders, func(contractAddr typesutils.ContractAddress, pair typesutils.PairString, val any) {
+		blockOrders := val.(*BlockOrders)
+		for _, blockOrder := range *blockOrders {
+			copy.GetBlockOrders(contractAddr, pair).AddOrder(blockOrder)
+		}
 	})
 
-	s.BlockCancels.Range(func(key, val any) bool {
-		contractAddr := key.(typesutils.ContractAddress)
-		_map := val.(*sync.Map)
-		_map.Range(func(pkey, pval any) bool {
-			pair := pkey.(typesutils.PairString)
-			blockCancels := pval.(*BlockCancellations)
-			for _, blockCancel := range *blockCancels {
-				copy.GetBlockCancels(contractAddr, pair).AddCancel(blockCancel)
-			}
-			return true
-		})
-		return true
+	deepCopyNestedMap(s.BlockCancels, func(contractAddr typesutils.ContractAddress, pair typesutils.PairString, val any) {
+		blockCancels := val.(*BlockCancellations)
+		for _, blockCancel := range *blockCancels {
+			copy.GetBlockCancels(contractAddr, pair).AddCancel(blockCancel)
+		}
 	})
 
-	s.DepositInfo.Range(func(key, val any) bool {
-		contractAddr := key.(typesutils.ContractAddress)
+	deepCopyMap(s.DepositInfo, func(contractAddr typesutils.ContractAddress, val any) {
 		deposits := val.(*DepositInfo)
 		for _, deposit := range *deposits {
 			copy.GetDepositInfo(contractAddr).AddDeposit(deposit)
 		}
-		return true
 	})
 
-	s.LiquidationRequests.Range(func(key, val any) bool {
-		contractAddr := key.(typesutils.ContractAddress)
+	deepCopyMap(s.LiquidationRequests, func(contractAddr typesutils.ContractAddress, val any) {
 		liquidations := val.(*LiquidationRequests)
 		for _, liquidation := range *liquidations {
 			copy.GetLiquidationRequests(contractAddr).AddNewLiquidationRequest(liquidation.Requestor, liquidation.AccountToLiquidate)
 		}
-		return true
 	})
 
 	return copy
